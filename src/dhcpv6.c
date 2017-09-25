@@ -18,6 +18,15 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <limits.h>
+#ifdef OpenBSD
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <net/if_arp.h>
+#include <netinet/if_ether.h>
+#endif
 #include <resolv.h>
 #include <string.h>
 #include <unistd.h>
@@ -26,11 +35,15 @@
 #include <ctype.h>
 #include <sys/time.h>
 #include <sys/ioctl.h>
+#ifndef OpenBSD
 #include <sys/socket.h>
 #include <netinet/in.h>
+#endif
 
 #include <net/if.h>
+#ifndef OpenBSD
 #include <net/ethernet.h>
+#endif
 
 #include "odhcp6c.h"
 #ifdef LIBUBOX
@@ -132,11 +145,15 @@ int init_dhcpv6(const char *ifname, unsigned int options, int sol_timeout)
 		return -1;
 
 	// Detect interface
+#ifndef OpenBSD
 	struct ifreq ifr;
 	strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
 	if (ioctl(sock, SIOCGIFINDEX, &ifr) < 0)
 		return -1;
 	ifindex = ifr.ifr_ifindex;
+#else
+	ifindex = if_nametoindex(ifname);
+#endif
 
 	// Create client DUID
 	size_t client_id_len;
@@ -145,8 +162,22 @@ int init_dhcpv6(const char *ifname, unsigned int options, int sol_timeout)
 		uint8_t duid[14] = {0, DHCPV6_OPT_CLIENTID, 0, 10, 0,
 				DHCPV6_DUID_LLADDR, 0, 1};
 
+#ifndef OpenBSD
 		if (ioctl(sock, SIOCGIFHWADDR, &ifr) >= 0)
 			memcpy(&duid[8], ifr.ifr_hwaddr.sa_data, ETHER_ADDR_LEN);
+#else
+		struct ifaddrs *ifap, *ifaptr;
+
+		if (getifaddrs(&ifap) == 0) {
+			for(ifaptr = ifap; ifaptr != NULL; ifaptr = (ifaptr)->ifa_next) {
+				if (!strcmp((ifaptr)->ifa_name, ifname) && (((ifaptr)->ifa_addr)->sa_family == AF_LINK)) {
+					memcpy(&duid[8], (struct sockaddr_dl *)(ifaptr)->ifa_addr, ETHER_ADDR_LEN);
+					break;
+				}
+			}
+			freeifaddrs(ifap);
+		}
+#endif
 
 		uint8_t zero[ETHER_ADDR_LEN] = {0, 0, 0, 0, 0, 0};
 		struct ifreq ifs[100], *ifp, *ifend;
@@ -160,6 +191,7 @@ int init_dhcpv6(const char *ifname, unsigned int options, int sol_timeout)
 			ifend = ifs + (ifc.ifc_len / sizeof(struct ifreq));
 			for (ifp = ifc.ifc_req; ifp < ifend &&
 					!memcmp(&duid[8], zero, ETHER_ADDR_LEN); ifp++) {
+#ifndef OpenBSD
 				memcpy(ifr.ifr_name, ifp->ifr_name,
 						sizeof(ifr.ifr_name));
 				if (ioctl(sock, SIOCGIFHWADDR, &ifr) < 0)
@@ -167,6 +199,18 @@ int init_dhcpv6(const char *ifname, unsigned int options, int sol_timeout)
 
 				memcpy(&duid[8], ifr.ifr_hwaddr.sa_data,
 						ETHER_ADDR_LEN);
+#else
+				if (getifaddrs(&ifap) != 0)
+				   	continue;
+
+				for(ifaptr = ifap; ifaptr != NULL; ifaptr = (ifaptr)->ifa_next) {
+					if (!strcmp((ifaptr)->ifa_name, ifname) && (((ifaptr)->ifa_addr)->sa_family == AF_LINK)) {
+						memcpy(&duid[8], (struct sockaddr_dl *)(ifaptr)->ifa_addr, ETHER_ADDR_LEN);
+						break;
+					}
+				}
+				freeifaddrs(ifap);
+#endif
 			}
 		}
 
@@ -201,7 +245,11 @@ int init_dhcpv6(const char *ifname, unsigned int options, int sol_timeout)
 	setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, &val, sizeof(val));
 	setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
 	setsockopt(sock, IPPROTO_IPV6, IPV6_RECVPKTINFO, &val, sizeof(val));
+#ifndef OpenBSD
 	setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, ifname, strlen(ifname));
+#else
+	setsockopt(sock, SOL_SOCKET, IP_RECVIF, ifname, strlen(ifname));
+#endif
 
 	struct sockaddr_in6 client_addr = { .sin6_family = AF_INET6,
 		.sin6_port = htons(DHCPV6_CLIENT_PORT), .sin6_flowinfo = 0 };
@@ -366,7 +414,10 @@ static void dhcpv6_send(enum dhcpv6_msg type, uint8_t trid[3], uint32_t ecs)
 					ia_pd[ia_pd_len++] = ex_len - 4;
 					ia_pd[ia_pd_len++] = e[j].priority;
 
+//#ifndef OpenBSD
 					uint32_t excl = ntohl(e[j].router.s6_addr32[1]);
+//#else
+//#endif
 					excl >>= (64 - e[j].priority);
 					excl <<= 8 - ((e[j].priority - e[j].length) % 8);
 
@@ -1227,7 +1278,10 @@ static int dhcpv6_parse_ia(void *opt, void *end)
 
 				// Abusing router & priority fields for exclusion
 				entry.router = entry.target;
+//#ifndef OpenBSD
 				entry.router.s6_addr32[1] |= htonl(exclude);
+//#else
+//#endif
 				entry.priority = elen;
 			}
 

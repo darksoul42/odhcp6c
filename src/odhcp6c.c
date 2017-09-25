@@ -24,6 +24,10 @@
 #include <string.h>
 #include <stdbool.h>
 
+#ifdef OpenBSD
+// Added for OpenBSD
+#include <sys/socket.h>
+#endif
 #include <net/if.h>
 #include <sys/syscall.h>
 #include <arpa/inet.h>

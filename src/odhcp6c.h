@@ -16,6 +16,12 @@
 #include <stdbool.h>
 #include <netinet/in.h>
 
+#ifdef OpenBSD
+#define mempcpy memcpy
+#define SOL_IPV6        41
+#define SOL_ICMPV6      58
+#endif
+
 #define _unused __attribute__((unused))
 #define _packed __attribute__((packed))
 #define _aligned(n) __attribute__((aligned(n)))

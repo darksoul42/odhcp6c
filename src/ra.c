@@ -20,17 +20,28 @@
 #include <stdbool.h>
 #include <syslog.h>
 #include <unistd.h>
+#ifndef OpenBSD
 #include <resolv.h>
 #include <alloca.h>
+#else
+#include <stdlib.h>
+#include <sys/socket.h>
+#endif
 
 #include <net/if.h>
 #include <arpa/inet.h>
+#ifndef OpenBSD
 #include <sys/socket.h>
+#endif
 #include <sys/types.h>
 #include <netinet/in.h>
 #include <netinet/icmp6.h>
 
+#ifdef OpenBSD
+#include <resolv.h>
+#else
 #include <linux/rtnetlink.h>
+#endif
 
 #ifndef SOL_NETLINK
 #define SOL_NETLINK 270
